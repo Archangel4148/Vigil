@@ -2,6 +2,8 @@ import time
 
 import cv2
 import numpy as np
+import win32api
+import win32con
 import win32gui
 from mss import mss
 
@@ -65,36 +67,46 @@ class MonitorCapture:
                 # Print to terminal (costs performance)
                 print(f"Average FPS: {avg_fps:.2f}")
 
-            # Quit on 'q'
-            if cv2.waitKey(1) == ord('q'):
-                cv2.destroyAllWindows()
+            # Handle window closing
+            cv2.waitKey(1)
+            if cv2.getWindowProperty("Window Capture", cv2.WND_PROP_VISIBLE) < 1:
                 break
+
+        # Close everything
+        cv2.destroyAllWindows()
+        self.sct.close()
 
 
 class WindowCapture(MonitorCapture):
-    def __init__(self, window_title: str = "", resize_factor=0.5, show_fps=True, print_fps=False, visible=True):
-        self.window_title = window_title
-        if self.window_title:
+    def __init__(self, window_id: int = None, window_title: str = "", resize_factor=0.5, show_fps=True, print_fps=False,
+                 visible=True):
+        if window_id:
+            self.target_window_id = window_id
+            self.window_title = win32gui.GetWindowText(self.target_window_id)
+        elif window_title:
+            self.window_title = window_title
             self.target_window_id = win32gui.FindWindow(None, self.window_title)
         else:
             self.target_window_id = win32gui.GetForegroundWindow()
+            self.window_title = win32gui.GetWindowText(self.target_window_id)
 
         # Validate window capture creation
         if not self.target_window_id or not win32gui.IsWindowVisible(self.target_window_id):
             raise Exception(f"Window not found or is not visible: \"{self.window_title}\"")
-        if win32gui.IsIconic(self.target_window_id):
-            raise RuntimeError("Cannot capture minimized window.")
 
         print(
-            f"Created capture of window: ({self.target_window_id}) \"{win32gui.GetWindowText(self.target_window_id)}\"")
+            f"Created capture of window: ({self.target_window_id}) \"{win32gui.GetWindowText(self.target_window_id)}\""
+        )
 
         # Get window region and initialize base class
         region = self.get_window_geometry()
-        super().__init__(region=region,
-                         resize_factor=resize_factor,
-                         show_fps=show_fps,
-                         print_fps=print_fps,
-                         visible=visible)
+        super().__init__(
+            region=region,
+            resize_factor=resize_factor,
+            show_fps=show_fps,
+            print_fps=print_fps,
+            visible=visible
+        )
 
     def get_window_geometry(self):
         # Get client coords
@@ -141,12 +153,83 @@ class WindowCapture(MonitorCapture):
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (200, 200, 200), 2)
                 cv2.imshow("Window Capture", black_frame)
 
-            # Handle exit
-            if cv2.waitKey(1) == ord('q'):
-                cv2.destroyAllWindows()
+            # Handle window closing
+            cv2.waitKey(1)
+            if cv2.getWindowProperty("Window Capture", cv2.WND_PROP_VISIBLE) < 1:
                 break
+
+        # Close everything
+        cv2.destroyAllWindows()
+        self.sct.close()
+
+
+def list_and_select_window():
+    windows = []
+
+    def enum_handler(hwnd, _):
+        if win32gui.IsWindowVisible(hwnd):
+            title = win32gui.GetWindowText(hwnd)
+            if title:
+                windows.append((hwnd, title))
+
+    win32gui.EnumWindows(enum_handler, None)
+
+    print("Select a window:")
+    for i, (_, title) in enumerate(windows):
+        print(f"{i}: {title}")
+
+    while True:
+        try:
+            index = int(input("Enter the number of the window to select: "))
+            if 0 <= index < len(windows):
+                return windows[index][0]  # Return HWND
+        except ValueError:
+            print("Invalid input, try again.")
+
+
+def wait_for_click_and_get_window():
+    print("Hover over the window you want to capture and left-click...")
+
+    # Wait for left mouse click
+    while True:
+        state_left = win32api.GetKeyState(win32con.VK_LBUTTON)
+        if state_left < 0:
+            break
+        time.sleep(0.01)
+
+    # Get cursor position at click time
+    x, y = win32api.GetCursorPos()
+
+    # Get window under cursor
+    hwnd = win32gui.WindowFromPoint((x, y))
+
+    while hwnd:
+        class_name = win32gui.GetClassName(hwnd)
+        window_title = win32gui.GetWindowText(hwnd)
+
+        if class_name in ("Progman", "WorkerW") or window_title == "FolderView":
+            print(f"Ignored system window: {class_name}")
+            hwnd = None
+        else:
+            break
+
+    if hwnd:
+        window_title = win32gui.GetWindowText(hwnd)
+        print(f"Selected window: ({hwnd}) \"{window_title}\"")
+        return hwnd
+    else:
+        print("No window found at click position.")
+        return None
 
 
 if __name__ == '__main__':
-    wc = WindowCapture()
-    wc.run()
+    # Select a window and begin capturing it
+    CLICK_SELECT_WINDOW = True
+    if CLICK_SELECT_WINDOW:
+        window = wait_for_click_and_get_window()
+    else:
+        window = list_and_select_window()
+
+    if window is not None:
+        wc = WindowCapture(window_id=window)
+        wc.run()
