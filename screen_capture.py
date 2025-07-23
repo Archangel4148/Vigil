@@ -7,10 +7,14 @@ import win32con
 import win32gui
 from mss import mss
 
+from processing.processing_modules import BaseCaptureProcessor, ColorFinder
+
 
 class MonitorCapture:
-    def __init__(self, monitor_number=1, region=None, resize_factor=0.5, show_fps=True, print_fps=False, visible=True):
+    def __init__(self, monitor_number=1, region=None, processor: BaseCaptureProcessor = None,
+                 resize_factor=0.5, show_fps=True, print_fps=False, visible=True):
         self.monitor_number = monitor_number
+        self.processor = processor
         self.resize_factor = resize_factor
         self.show_fps = show_fps
         self.print_fps = print_fps
@@ -53,6 +57,10 @@ class MonitorCapture:
             img = np.asarray(self.sct.grab(self.monitor))
             avg_fps = self._calculate_fps()
 
+            # Process the image using the current module
+            if self.processor:
+                self.processor.process(img)
+
             if self.visible:
                 if self.show_fps:
                     # Draw FPS on screen (costs performance)
@@ -60,8 +68,8 @@ class MonitorCapture:
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
                 # Resize and display (costs performance)
-                processed_img = cv2.resize(img, (0, 0), fx=self.resize_factor, fy=self.resize_factor)
-                cv2.imshow('Monitor Capture', processed_img)
+                resized_img = cv2.resize(img, (0, 0), fx=self.resize_factor, fy=self.resize_factor)
+                cv2.imshow('Monitor Capture', resized_img)
 
             if self.print_fps:
                 # Print to terminal (costs performance)
@@ -78,7 +86,8 @@ class MonitorCapture:
 
 
 class WindowCapture(MonitorCapture):
-    def __init__(self, window_id: int = None, window_title: str = "", resize_factor=0.5, show_fps=True, print_fps=False,
+    def __init__(self, window_id: int = None, window_title: str = "", processor: BaseCaptureProcessor = None,
+                 resize_factor=0.5, show_fps=True, print_fps=False,
                  visible=True):
         if window_id:
             self.target_window_id = window_id
@@ -102,6 +111,7 @@ class WindowCapture(MonitorCapture):
         region = self.get_window_geometry()
         super().__init__(
             region=region,
+            processor=processor,
             resize_factor=resize_factor,
             show_fps=show_fps,
             print_fps=print_fps,
@@ -135,6 +145,10 @@ class WindowCapture(MonitorCapture):
                 img = np.asarray(self.sct.grab(self.monitor))
                 avg_fps = self._calculate_fps()
 
+                # Process the image using the current module
+                if self.processor:
+                    self.processor.process(img)
+
                 if self.visible:
                     if self.show_fps:
                         cv2.putText(img, f"FPS: {self.fps_delayed:.2f}", (10, 30),
@@ -161,6 +175,16 @@ class WindowCapture(MonitorCapture):
         # Close everything
         cv2.destroyAllWindows()
         self.sct.close()
+
+
+def get_top_level_window(hwnd):
+    # Walk up the window hierarchy until you find a top-level window
+    # (A top-level window usually has no parent or its parent is the desktop)
+    parent = win32gui.GetParent(hwnd)
+    while parent:
+        hwnd = parent
+        parent = win32gui.GetParent(hwnd)
+    return hwnd
 
 
 def list_and_select_window():
@@ -214,22 +238,10 @@ def wait_for_click_and_get_window():
             break
 
     if hwnd:
+        hwnd = get_top_level_window(hwnd)
         window_title = win32gui.GetWindowText(hwnd)
         print(f"Selected window: ({hwnd}) \"{window_title}\"")
         return hwnd
     else:
         print("No window found at click position.")
         return None
-
-
-if __name__ == '__main__':
-    # Select a window and begin capturing it
-    CLICK_SELECT_WINDOW = True
-    if CLICK_SELECT_WINDOW:
-        window = wait_for_click_and_get_window()
-    else:
-        window = list_and_select_window()
-
-    if window is not None:
-        wc = WindowCapture(window_id=window)
-        wc.run()
