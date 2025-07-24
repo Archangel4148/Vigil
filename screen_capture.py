@@ -7,7 +7,7 @@ import win32con
 import win32gui
 from mss import mss
 
-from processing.processing_modules import BaseCaptureProcessor, ColorFinder
+from processing.processing_modules import BaseCaptureProcessor
 
 
 class MonitorCapture:
@@ -58,8 +58,8 @@ class MonitorCapture:
             avg_fps = self._calculate_fps()
 
             # Process the image using the current module
-            if self.processor:
-                self.processor.process(img)
+            if (processed_frame := self.processor.process(img)) is not None:
+                img = processed_frame
 
             if self.visible:
                 if self.show_fps:
@@ -77,7 +77,7 @@ class MonitorCapture:
 
             # Handle window closing
             cv2.waitKey(1)
-            if cv2.getWindowProperty("Window Capture", cv2.WND_PROP_VISIBLE) < 1:
+            if cv2.getWindowProperty("Monitor Capture", cv2.WND_PROP_VISIBLE) < 1:
                 break
 
         # Close everything
@@ -146,8 +146,8 @@ class WindowCapture(MonitorCapture):
                 avg_fps = self._calculate_fps()
 
                 # Process the image using the current module
-                if self.processor:
-                    self.processor.process(img)
+                if (processed_frame := self.processor.process(img)) is not None:
+                    img = processed_frame
 
                 if self.visible:
                     if self.show_fps:
