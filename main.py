@@ -12,7 +12,7 @@ else:
 
 if window is not None:
     # Find target RGB color:
-    processor = ColorFinder(color_rgb=(21, 255, 0))
+    processor = ColorFinder(color_rgb=(73, 79, 137), tolerance=25)
 
     # Find target template image:
     # template_image = cv2.imread("images/pineapple.jpg")

@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from pytesseract import pytesseract
 
-pytesseract.tesseract_cmd = "D:\\Tesseract\\tesseract.exe"
+pytesseract.tesseract_cmd = "E:\\Tesseract\\tesseract.exe"
 
 
 class BaseCaptureProcessor:
