@@ -29,11 +29,11 @@ class MonitorCapture:
     def _get_monitor_region(self):
         mon = self.sct.monitors[self.monitor_number]
         return {
-            'top': mon['top'],
-            'left': mon['left'],
-            'width': mon['width'],
-            'height': mon['height'],
-            'mon': self.monitor_number
+            "top": mon["top"],
+            "left": mon["left"],
+            "width": mon["width"],
+            "height": mon["height"],
+            "mon": self.monitor_number
         }
 
     def _calculate_fps(self):
@@ -69,7 +69,7 @@ class MonitorCapture:
 
                 # Resize and display (costs performance)
                 resized_img = cv2.resize(img, (0, 0), fx=self.resize_factor, fy=self.resize_factor)
-                cv2.imshow('Monitor Capture', resized_img)
+                cv2.imshow("Monitor Capture", resized_img)
 
             if self.print_fps:
                 # Print to terminal (costs performance)
@@ -147,15 +147,18 @@ class WindowCapture(MonitorCapture):
 
                 # Process the image using the current module
                 if (processed_frame := self.processor.process(img)) is not None:
-                    img = processed_frame
+                    # Make a fresh copy before drawing text to avoid stacking
+                    img_to_show = processed_frame.copy()
+                else:
+                    img_to_show = img.copy()
 
                 if self.visible:
                     if self.show_fps:
-                        cv2.putText(img, f"FPS: {self.fps_delayed:.2f}", (10, 30),
+                        cv2.putText(img_to_show, f"FPS: {self.fps_delayed:.2f}", (10, 30),
                                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-                    processed_img = cv2.resize(img, (0, 0), fx=self.resize_factor, fy=self.resize_factor)
-                    cv2.imshow('Window Capture', processed_img)
+                    processed_img = cv2.resize(img_to_show, (0, 0), fx=self.resize_factor, fy=self.resize_factor)
+                    cv2.imshow("Window Capture", processed_img)
 
                 if self.print_fps:
                     print(f"Average FPS: {avg_fps:.2f}")
@@ -167,8 +170,11 @@ class WindowCapture(MonitorCapture):
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (200, 200, 200), 2)
                 cv2.imshow("Window Capture", black_frame)
 
-            # Handle window closing
-            cv2.waitKey(1)
+            # Handle key presses
+            key = cv2.waitKey(1) & 0xFF  # Get the key
+            self.processor.handle_keypress(key)
+
+            # The window is closed
             if cv2.getWindowProperty("Window Capture", cv2.WND_PROP_VISIBLE) < 1:
                 break
 

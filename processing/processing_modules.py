@@ -10,6 +10,10 @@ class BaseCaptureProcessor:
         """Process a captured frame (OpenCV image), returning the processed image."""
         raise NotImplementedError("You're processing using a BaseCaptureProcessor. Instead use a subclass!")
 
+    def handle_keypress(self, key: int) -> None:
+        """Optional method to handle key presses; override in subclass if needed."""
+        pass
+
 
 class ColorFinder(BaseCaptureProcessor):
     def __init__(self, color_rgb: tuple[int, int, int], tolerance: int = 10):
