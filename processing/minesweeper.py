@@ -197,6 +197,11 @@ class MinesweeperProcessor(BaseCaptureProcessor):
 
             for name, (template, color) in self.cell_templates.items():
                 self.update_cell_states(gray_frame, template, result_frame, color, offset=(x0, y0), state_name=name)
+
+            # Update mine probabilities (first with basic sweep, then with subset inference)
+            self.update_mine_probabilities_basic()
+            apply_subset_inference(self.grid)
+
             self.last_process_time = now
             self.last_result = result_frame
 
@@ -240,10 +245,6 @@ class MinesweeperProcessor(BaseCaptureProcessor):
                     cell = self.grid[r][c]
                     if cell is not None:
                         cell.state = state_name
-
-        # Update mine probabilities (first with basic sweep, then with subset inference)
-        self.update_mine_probabilities_basic()
-        apply_subset_inference(self.grid)
 
         return output_image, len(matches)
 
@@ -300,7 +301,7 @@ class MinesweeperProcessor(BaseCaptureProcessor):
                     adjacent = get_adjacent_cells(r, c, self.grid)
                     flagged_count = sum(1 for adj_cell in adjacent if adj_cell.state == "flag")
                     unknown_cells = [adj_cell for adj_cell in adjacent if
-                                     adj_cell.state == "closed" and adj_cell.bomb_probability != 1.0]
+                                     adj_cell.state == "closed"]
                     remaining_mines = cell.mine_number - flagged_count
 
                     if remaining_mines == 0:
@@ -425,7 +426,7 @@ def apply_subset_inference(grid: list[list[Cell | None]]):
 
 if __name__ == "__main__":
     # Load an image
-    path = "../images/minesweeper/difficult_game.png"
+    path = "../images/minesweeper/break_game.png"
     frame = cv2.imread(path)
     if frame is None:
         raise FileNotFoundError(f"Failed to load image from {path}")
@@ -457,7 +458,7 @@ if __name__ == "__main__":
                 if cell.bomb_probability is not None:
                     prob_text = f"{cell.bomb_probability * 100:.1f}%"
                     text_pos = (x + 2, y + 12)
-                    cv2.putText(output, prob_text, text_pos, font, font_scale, prob_color, font_thickness, cv2.LINE_AA)
+                    # cv2.putText(output, prob_text, text_pos, font, font_scale, prob_color, font_thickness, cv2.LINE_AA)
 
     # Save the resulting image
     cv2.imwrite("result.png", output)
