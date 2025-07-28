@@ -1,10 +1,33 @@
 import os
 import time
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
 
 from processing.processing_modules import BaseCaptureProcessor
+
+
+@dataclass
+class Cell:
+    position: tuple[int, int] | None = None
+    state: str = "unknown"
+    bomb_probability: float = float("inf")
+
+    def __repr__(self):
+        return f"Cell(state={self.state}, position={self.position})"
+
+    def __hash__(self):
+        return hash(self.position)
+
+    def __eq__(self, other):
+        return isinstance(other, Cell) and self.position == other.position
+
+    @property
+    def mine_number(self):
+        if self.state.isdigit():
+            return int(self.state)
+        return None
 
 
 class MinesweeperProcessor(BaseCaptureProcessor):
@@ -25,8 +48,7 @@ class MinesweeperProcessor(BaseCaptureProcessor):
         self.position_to_index = None
 
         # Game cell grids
-        self.positions_grid = None
-        self.states_grid = None
+        self.grid: list[list[Cell | None]] | None = None
 
         print("Loaded templates! While focused on the screen capture window, press 'r' to re-detect the board region.")
 
@@ -102,54 +124,49 @@ class MinesweeperProcessor(BaseCaptureProcessor):
 
     def create_grid(self, all_matches):
         # Sort matches by y (row), then x (col)
-        all_matches = sorted(all_matches, key=lambda m: (m[2], m[1]))  # sort by y, then x
-        self.positions_grid = []
-        self.states_grid = []
+        all_matches = sorted(all_matches, key=lambda m: (m[2], m[1]))
+        self.grid = []
         current_row = []
-        current_names_row = []
         last_y = None
         row_tol = all_matches[0][4] // 2  # half cell height tolerance
 
         for match in all_matches:
             name, x, y, w, h = match
             if last_y is None:
-                current_row.append((x, y, w, h))
-                current_names_row.append(name)
+                current_row.append(Cell(position=(x, y), state=name))
                 last_y = y
                 continue
 
             if abs(y - last_y) > row_tol:
-                # New row detected
-                self.positions_grid.append(current_row)
-                self.states_grid.append(current_names_row)
-                current_row = [(x, y, w, h)]
-                current_names_row = [name]
+                # New row detected, sort previous row by x before appending
+                current_row.sort(key=lambda c: c.position[0])
+                self.grid.append(current_row)
+
+                current_row = [Cell(position=(x, y), state=name)]
                 last_y = y
             else:
                 # Same row, append match
-                current_row.append((x, y, w, h))
-                current_names_row.append(name)
+                current_row.append(Cell(position=(x, y), state=name))
 
+        # Sort and append the last row
         if current_row:
-            self.positions_grid.append(current_row)
-            self.states_grid.append(current_names_row)
+            current_row.sort(key=lambda c: c.position[0])
+            self.grid.append(current_row)
 
-        self.num_rows = len(self.positions_grid)
-        self.num_cols = max(len(row) for row in self.positions_grid) if self.positions_grid else 0
+        self.num_rows = len(self.grid)
+        self.num_cols = max(len(row) for row in self.grid) if self.grid else 0
 
         # Pad rows to rectangular shape with None
-        for row, name_row in zip(self.positions_grid, self.states_grid):
+        for row in self.grid:
             while len(row) < self.num_cols:
                 row.append(None)
-            while len(name_row) < self.num_cols:
-                name_row.append(None)
 
     def build_position_lookup(self):
         self.position_to_index = {}
-        for r, row in enumerate(self.positions_grid):
-            for c, pos in enumerate(row):
-                if pos is not None:
-                    x, y, w, h = pos
+        for r, row in enumerate(self.grid):
+            for c, cell in enumerate(row):
+                if cell is not None and cell.position is not None:
+                    x, y = cell.position
                     self.position_to_index[(x, y)] = (r, c)
 
     def process(self, frame: np.ndarray) -> np.ndarray:
@@ -178,13 +195,13 @@ class MinesweeperProcessor(BaseCaptureProcessor):
             gray_frame = gray_frame[y0:y0 + height, x0:x0 + width]
             result_frame = frame.copy()
 
-            # Highlight all cell matches
-            self.states_grid = [["unknown" for _ in range(self.num_cols)] for _ in range(self.num_rows)]
-
             for name, (template, color) in self.cell_templates.items():
-                self.highlight_matches(gray_frame, template, result_frame, color, offset=(x0, y0), state_name=name)
+                self.update_cell_states(gray_frame, template, result_frame, color, offset=(x0, y0), state_name=name)
             self.last_process_time = now
             self.last_result = result_frame
+
+            result_frame = self.mark_cells(result_frame)
+
             return result_frame
         else:
             # Return the last result
@@ -194,13 +211,8 @@ class MinesweeperProcessor(BaseCaptureProcessor):
         if key == ord('r'):
             # Clear the board region for re-detection
             self.board_region = None
-        elif key == ord('p'):
-            # Print grids for debug
-            print("\nDebug grids:")
-            print(self.states_grid)
-            print(self.positions_grid)
 
-    def highlight_matches(
+    def update_cell_states(
             self,
             gray_img: np.ndarray,
             template: np.ndarray,
@@ -216,17 +228,95 @@ class MinesweeperProcessor(BaseCaptureProcessor):
         for x, y, w, h in matches:
             x += offset[0]
             y += offset[1]
-            cv2.rectangle(output_image, (x, y), (x + w, y + h), rect_color, 2)
+            # cv2.rectangle(output_image, (x, y), (x + w, y + h), rect_color, 2)
 
             # Update the state grid
             if state_name is not None:
-                snapped_x, snapped_y = snap_position(x, y, list(self.position_to_index.keys()))
+                snapped_x, snapped_y = snap_position(x, y, [cell.position[:2] for row in self.grid for cell in row if
+                                                            cell is not None])
                 idx = self.position_to_index.get((snapped_x, snapped_y))
                 if idx is not None:
                     r, c = idx
-                    self.states_grid[r][c] = state_name
+                    cell = self.grid[r][c]
+                    if cell is not None:
+                        cell.state = state_name
+
+        # Update mine probabilities (first with basic sweep, then with subset inference)
+        self.update_mine_probabilities_basic()
+        apply_subset_inference(self.grid)
 
         return output_image, len(matches)
+
+    def mark_cells(self, frame) -> np.ndarray:
+        # Draw green circles on safe cells
+        cell_w, cell_h = self.cell_templates["closed"][0].shape[::-1]  # (width, height)
+        marked_cell = False
+        game_over = True
+        for row in self.grid:
+            for cell in row:
+                if cell is not None and cell.position is not None and cell.state == "closed":
+                    game_over = False
+                    x, y = cell.position
+                    center = (x + cell_w // 2, y + cell_h // 2)
+                    if cell.bomb_probability == 0.0:
+                        marked_cell = True
+                        cv2.circle(frame, center, radius=cell_w // 4, color=(0, 255, 0), thickness=2)
+                    elif cell.bomb_probability == 1.0:
+                        marked_cell = True
+                        cv2.circle(frame, center, radius=cell_w // 4, color=(0, 0, 255), thickness=2)
+        if not marked_cell and not game_over:
+            # No cells were marked, mark the best guess with a yellow circle
+            best_guess = min([cell for row in self.grid for cell in row if cell is not None and cell.state == "closed"],
+                             key=lambda cell: cell.bomb_probability)
+            x, y = best_guess.position
+            center = (x + cell_w // 2, y + cell_h // 2)
+            cv2.circle(frame, center, radius=cell_w // 4, color=(0, 255, 255), thickness=2)
+
+        return frame
+
+    def update_mine_probabilities_basic(self):
+        if self.grid is None:
+            return
+
+        # Reset all bomb probabilities to infinity before recalculation
+        for r, row in enumerate(self.grid):
+            for c, cell in enumerate(row):
+                if cell is None:
+                    continue
+                cell.bomb_probability = float("inf")
+                # Don't reset cells already confirmed safe (bomb_probability == 0)
+                if cell.state != "closed":
+                    # Only reset if they are still unknown
+                    cell.bomb_probability = 0.0
+                if cell.bomb_probability != 0.0:
+                    cell.bomb_probability = float("inf")
+
+        # Process numbered cells to update neighbors probabilities
+        for r, row in enumerate(self.grid):
+            for c, cell in enumerate(row):
+                if cell is None:
+                    continue
+                if cell.mine_number is not None:
+                    adjacent = get_adjacent_cells(r, c, self.grid)
+                    flagged_count = sum(1 for adj_cell in adjacent if adj_cell.state == "flag")
+                    unknown_cells = [adj_cell for adj_cell in adjacent if
+                                     adj_cell.state == "closed" and adj_cell.bomb_probability != 1.0]
+                    remaining_mines = cell.mine_number - flagged_count
+
+                    if remaining_mines == 0:
+                        # All mines accounted for, unknown neighbors are safe
+                        for adj_cell in unknown_cells:
+                            # Mark as safe only if not already marked as mine or flagged
+                            adj_cell.bomb_probability = 0.0
+                    elif unknown_cells:
+                        prob = remaining_mines / len(unknown_cells)
+                        for adj_cell in unknown_cells:
+                            if prob == 1.0:
+                                # If a cell has a probability of 1.0, mark it as a mine
+                                adj_cell.bomb_probability = 1.0
+                            elif adj_cell.bomb_probability not in (0.0, 1.0) and adj_cell.bomb_probability > prob:
+                                # If the cell is unknown, and the new probability is lower, update it
+                                adj_cell.bomb_probability = prob
 
 
 def get_matches(gray_img: np.ndarray, gray_template: np.ndarray, threshold=0.99):
@@ -275,11 +365,100 @@ def benchmark_per_cell_time(image_path: str):
     print(f"Cells matched: {cell_count}")
     print(f"Estimated PER_CELL_PROCESS_TIME: {elapsed / cell_count:.6f} seconds")
 
-    return per_cell_time
+    return elapsed / cell_count
+
+
+def get_adjacent_cells(row: int, col: int, grid: list[list[Cell | None]], print_debug=False) -> list[Cell]:
+    num_rows = len(grid)
+    num_cols = len(grid[0]) if num_rows > 0 else 0
+    adjacent_cells = []
+    offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+    for dx, dy in offsets:
+        if 0 <= row + dx < num_rows and 0 <= col + dy < num_cols:
+            adjacent_cells.append(grid[row + dx][col + dy])
+            if print_debug:
+                print(f"({row + dy}, {col + dx}) - {grid[row + dy][col + dx].state}  FROM ({row}, {col})")
+    return adjacent_cells
+
+
+def apply_subset_inference(grid: list[list[Cell | None]]):
+    constraints = []
+
+    # Step 1: Build constraints from numbered cells
+    for r, row in enumerate(grid):
+        for c, cell in enumerate(row):
+            if cell is None or cell.mine_number is None:
+                continue
+
+            adjacent = get_adjacent_cells(r, c, grid)
+            unknowns = [adj for adj in adjacent if adj is not None and adj.state == "closed"]
+            flagged = sum(1 for adj in adjacent if adj is not None and adj.state == "flag")
+            remaining = cell.mine_number - flagged
+
+            if remaining > 0 and unknowns:
+                constraints.append((set(unknowns), remaining))
+
+    # Step 2: Compare constraints for subset relationships
+    for i in range(len(constraints)):
+        for j in range(len(constraints)):
+            if i == j:
+                continue
+            cells_i, mines_i = constraints[i]
+            cells_j, mines_j = constraints[j]
+
+            if cells_i.issubset(cells_j):
+                diff_cells = cells_j - cells_i
+                diff_mines = mines_j - mines_i
+
+                # If the difference is zero mines, then all diff_cells are safe
+                if diff_mines == 0:
+                    for cell in diff_cells:
+                        if cell.bomb_probability != 0.0:
+                            cell.bomb_probability = 0.0
+
+                # If the number of diff_cells == diff_mines, all are mines
+                elif diff_mines == len(diff_cells):
+                    for cell in diff_cells:
+                        if cell.bomb_probability != 1.0:
+                            cell.bomb_probability = 1.0
 
 
 if __name__ == "__main__":
-    # Profile the per-cell processing time for this computer
-    path = "../images/minesweeper/start_game.png"
-    per_cell_time = benchmark_per_cell_time(path)
-    print(f"\nYou can set `PER_CELL_PROCESS_TIME = {per_cell_time:.6f}` in your MinesweeperProcessor.")
+    # Load an image
+    path = "../images/minesweeper/difficult_game.png"
+    frame = cv2.imread(path)
+    if frame is None:
+        raise FileNotFoundError(f"Failed to load image from {path}")
+
+    processor = MinesweeperProcessor()
+    processor.OVERRIDE_PROCESS_INTERVAL = None  # ignore intervals
+
+    # Force find the board once
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    processor.find_board(gray)
+
+    # Process the frame once (this updates cell states and probabilities)
+    output = processor.process(frame)
+
+    # Get cell size (assumes all cells are the same size)
+    w, h = processor.cell_templates["closed"][0].shape[::-1]
+
+    # Set font and style for probability text
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.4
+    font_thickness = 1
+    prob_color = (0, 0, 255)  # Red text
+
+    # Draw probability text on each cell
+    for row in processor.grid:
+        for cell in row:
+            if cell is not None and cell.position is not None and cell.state == "closed":
+                x, y = cell.position
+                if cell.bomb_probability is not None:
+                    prob_text = f"{cell.bomb_probability * 100:.1f}%"
+                    text_pos = (x + 2, y + 12)
+                    cv2.putText(output, prob_text, text_pos, font, font_scale, prob_color, font_thickness, cv2.LINE_AA)
+
+    # Save the resulting image
+    cv2.imwrite("result.png", output)
+    print("Result saved as result.png")
