@@ -1,4 +1,5 @@
 import os
+import random
 import time
 from dataclasses import dataclass
 
@@ -34,7 +35,8 @@ class MinesweeperProcessor(BaseCaptureProcessor):
     PER_CELL_PROCESS_TIME = 0.000683  # s
     OVERRIDE_PROCESS_INTERVAL = 0.25
 
-    def __init__(self):
+    def __init__(self, autoplay_delay=0.5, stop_on_guess=False, auto_revive=False):
+        super().__init__()
         self.cell_templates = self.load_templates()
         self.last_process_time = 0
         self.last_board_search = 0
@@ -46,6 +48,13 @@ class MinesweeperProcessor(BaseCaptureProcessor):
         self.num_rows = None
         self.num_cols = None
         self.position_to_index = None
+
+        # Autoplay control
+        self.autoplay = False
+        self.auto_revive = auto_revive
+        self.autoplay_delay = autoplay_delay
+        self.stop_on_guess = stop_on_guess
+        self.last_click_time = 0
 
         # Game cell grids
         self.grid: list[list[Cell | None]] | None = None
@@ -202,6 +211,11 @@ class MinesweeperProcessor(BaseCaptureProcessor):
             self.update_mine_probabilities_basic()
             apply_subset_inference(self.grid)
 
+            # Autoplay if enabled
+            if self.autoplay and now - self.last_click_time >= self.autoplay_delay:
+                self.click_next_cell()
+                self.last_click_time = now
+
             self.last_process_time = now
             self.last_result = result_frame
 
@@ -216,6 +230,12 @@ class MinesweeperProcessor(BaseCaptureProcessor):
         if key == ord('r'):
             # Clear the board region for re-detection
             self.board_region = None
+        elif key == ord('a'):
+            self.autoplay = not self.autoplay
+            print(f"Autoplay {'enabled' if self.autoplay else 'disabled'}")
+        elif key == ord('c'):
+            # Process a click
+            self.click_next_cell()
 
     def update_cell_states(
             self,
@@ -318,6 +338,65 @@ class MinesweeperProcessor(BaseCaptureProcessor):
                             elif adj_cell.bomb_probability not in (0.0, 1.0) and adj_cell.bomb_probability > prob:
                                 # If the cell is unknown, and the new probability is lower, update it
                                 adj_cell.bomb_probability = prob
+
+    def click_next_cell(self) -> bool:
+        # Check if the game is dead (any revealed mine)
+        if any(cell is not None and cell.state in ("mine", "mine_clicked") for row in self.grid for cell in row):
+            print("Mine detected on screen — stopping autoplay.")
+            if self.auto_revive:
+                self.capture.focus_target_window()
+                self.press_key("space")
+                self.capture.focus_capture_display()
+            else:
+                self.autoplay = False
+                return False
+
+        # If the entire board is still closed, pick a random cell to start
+        all_cells = [cell for row in self.grid for cell in row if cell is not None]
+        if all(cell.state == "closed" for cell in all_cells):
+            closed_cells = [cell for cell in all_cells if cell.state == "closed"]
+            if not closed_cells:
+                print("No clickable cells found.")
+                self.autoplay = False
+                return False
+            chosen = random.choice(closed_cells)
+            sx, sy = self.capture.get_screen_coords(chosen.position[0] + 5, chosen.position[1] + 5)
+            self.click_screen(sx, sy, delay=0.05, refocus=True)
+            return True
+
+        # Safe moves first (probability 0.0)
+        safe_cells = [cell for cell in all_cells if cell.state == "closed" and cell.bomb_probability == 0.0]
+        if safe_cells:
+            chosen = safe_cells[0]
+            sx, sy = self.capture.get_screen_coords(chosen.position[0] + 5, chosen.position[1] + 5)
+            self.click_screen(sx, sy, delay=0.05, refocus=True)
+            return True
+
+        # Flag certain mines (probability 1.0)
+        mine_cells = [cell for cell in all_cells if cell.state == "closed" and cell.bomb_probability == 1.0]
+        if mine_cells:
+            chosen = mine_cells[0]
+            sx, sy = self.capture.get_screen_coords(chosen.position[0] + 5, chosen.position[1] + 5)
+            self.click_screen(sx, sy, delay=0.05, right_click=True, refocus=True)
+            return True
+
+        # If guessing is allowed, pick the lowest-probability unknown
+        if not self.stop_on_guess:
+            guess_cells = [cell for cell in all_cells
+                           if cell.state == "closed" and 0.0 < cell.bomb_probability < 1.0]
+            if guess_cells:
+                guess_cells.sort(key=lambda c: c.bomb_probability)
+                chosen = guess_cells[0]
+                sx, sy = self.capture.get_screen_coords(*chosen.position)
+                self.click_screen(sx+5, sy+5, delay=0.05, refocus=True)
+                return True
+
+        if self.autoplay:
+            print("No moves available — stopping autoplay.")
+            self.autoplay = False
+        else:
+            print("No moves available. It's up to you!")
+        return False
 
 
 def get_matches(gray_img: np.ndarray, gray_template: np.ndarray, threshold=0.99):

@@ -22,7 +22,8 @@ if window is not None:
     # processor = DigitRegionReader(ocr_region)
 
     # Analyze a minesweeper board:
-    processor = MinesweeperProcessor()
+    processor = MinesweeperProcessor(autoplay_delay=0.05, stop_on_guess=False, auto_revive=True)
 
     wc = WindowCapture(window_id=window, processor=processor)
+    processor.set_capture_interface(wc)
     wc.run()

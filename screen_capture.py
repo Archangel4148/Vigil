@@ -1,3 +1,4 @@
+import ctypes
 import time
 
 import cv2
@@ -8,6 +9,11 @@ import win32gui
 from mss import mss
 
 from processing.processing_modules import BaseCaptureProcessor
+
+try:
+    ctypes.windll.user32.SetProcessDPIAware()
+except Exception as e:
+    print(f"Failed to set DPI awareness: {e}")
 
 
 class MonitorCapture:
@@ -132,6 +138,18 @@ class WindowCapture(MonitorCapture):
             "width": right - left,
             "height": bottom - top
         }
+
+    def get_screen_coords(self, x: int, y: int) -> tuple[int, int]:
+        return win32gui.ClientToScreen(self.target_window_id, (x, y))
+
+    @staticmethod
+    def focus_capture_display():
+        hwnd = win32gui.FindWindow(None, "Window Capture")
+        if hwnd:
+            win32gui.SetForegroundWindow(hwnd)
+
+    def focus_target_window(self):
+        win32gui.SetForegroundWindow(self.target_window_id)
 
     def run(self):
         while True:

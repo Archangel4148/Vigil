@@ -1,11 +1,24 @@
+import time
+from typing import TYPE_CHECKING
+
 import cv2
 import numpy as np
+import pyautogui
 from pytesseract import pytesseract
+
+if TYPE_CHECKING:
+    from screen_capture import WindowCapture
 
 pytesseract.tesseract_cmd = "E:\\Tesseract\\tesseract.exe"
 
 
 class BaseCaptureProcessor:
+    def __init__(self):
+        self.capture = None
+
+    def set_capture_interface(self, capture: "WindowCapture"):
+        self.capture = capture
+
     def process(self, frame: np.ndarray) -> np.ndarray:
         """Process a captured frame (OpenCV image), returning the processed image."""
         raise NotImplementedError("You're processing using a BaseCaptureProcessor. Instead use a subclass!")
@@ -13,6 +26,39 @@ class BaseCaptureProcessor:
     def handle_keypress(self, key: int) -> None:
         """Optional method to handle key presses; override in subclass if needed."""
         pass
+
+    def click_screen(self, x: int, y: int, delay: float = 0, right_click: bool = False, refocus: bool = False):
+        pyautogui.FAILSAFE = False
+
+        try:
+            mouse_pos = pyautogui.position()
+            # Convert to global screen coords using your capture interface
+            sx, sy = self.capture.get_screen_coords(x, y)
+            print(f"Clicking at ({sx}, {sy})")
+
+            # Move mouse instantly to position
+            pyautogui.moveTo(sx, sy)
+
+            if right_click:
+                pyautogui.click(button='right')
+            else:
+                pyautogui.click(button='left')
+
+            if delay > 0:
+                time.sleep(delay)
+
+            if refocus:
+                self.capture.focus_capture_display()
+
+        except AttributeError:
+            print("Capture interface not set, cannot click screen.")
+
+    @staticmethod
+    def press_key(key: str):
+        try:
+            pyautogui.press(key)
+        except Exception as e:
+            print(f"Unsupported key or error pressing key '{key}': {e}")
 
 
 class ColorFinder(BaseCaptureProcessor):
@@ -58,6 +104,7 @@ class ColorFinder(BaseCaptureProcessor):
 
 class ImageFinder(BaseCaptureProcessor):
     def __init__(self, template_img, min_matches=15):
+        super().__init__()
         self.orb = cv2.ORB_create(nfeatures=1000)
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
         self.min_matches = min_matches
@@ -106,6 +153,8 @@ class DigitRegionReader(BaseCaptureProcessor):
             ocr_threshold: threshold value for binarization (default 150).
             show_text: whether to overlay detected Y value on the frame.
         """
+        super().__init__()
+
         self.region = region
         self.ocr_threshold = ocr_threshold
         self.show_text = show_text
